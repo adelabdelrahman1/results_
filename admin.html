@@ -54,7 +54,7 @@
         .table th, .table td { padding: 12px; text-align: center; border-bottom: 1px solid #e2e8f0; }
         .table th { background: #f7fafc; font-weight: 600; color: #2d3748; }
         .table tr:hover td { background: #faf5ff; }
-        .alert { padding: 15px 20px; border-radius: 20px; margin-bottom: 20px; animation: slideIn 0.5s ease; }
+        .alert { padding: 15px 20px; border-radius: 20px; margin-bottom: 20px; animation: slideIn 0.5s ease; position: fixed; top: 80px; left: 20px; right: 20px; z-index: 1000; max-width: 400px; margin: 0 auto; }
         @keyframes slideIn { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
         .alert-error { background: #f8d7da; color: #721c24; border-right: 4px solid #e74c3c; }
         .alert-success { background: #d4edda; color: #155724; border-right: 4px solid #27ae60; }
@@ -85,6 +85,9 @@
         .export-buttons { display: flex; gap: 10px; margin-bottom: 20px; justify-content: flex-end; flex-wrap: wrap; }
         .batch-update-card { background: linear-gradient(135deg, #fef3c7, #fde68a); border-right: 4px solid #f59e0b; }
         .json-instructions { background: #e8f4fd; border-right: 4px solid #3498db; padding: 15px; border-radius: 15px; margin-top: 15px; font-size: 13px; }
+        .save-indicator { position: fixed; bottom: 20px; right: 20px; background: #27ae60; color: white; padding: 8px 16px; border-radius: 30px; font-size: 12px; opacity: 0; transition: opacity 0.3s; z-index: 1000; }
+        .save-indicator.show { opacity: 1; }
+        .no-data-message { text-align: center; padding: 50px; color: #718096; }
         
         /* شاشة تسجيل الدخول */
         .login-overlay {
@@ -200,6 +203,7 @@
 </head>
 <body>
     <div id="app"></div>
+    <div id="saveIndicator" class="save-indicator">💾 تم الحفظ</div>
 
     <script>
         // نظام الحماية
@@ -339,6 +343,7 @@
             results: [],
             uploadLogs: [],
             isAuthenticated: false,
+            saveTimeout: null,
             gradeLevels: [
                 { id: 1, name: 'KG1' }, { id: 2, name: 'KG2' },
                 { id: 3, name: 'الصف الأول الابتدائي' }, { id: 4, name: 'الصف الثاني الابتدائي' },
@@ -349,7 +354,8 @@
                 { id: 13, name: 'الصف الثاني الثانوي' }, { id: 14, name: 'الصف الثالث الثانوي' }
             ],
             
-            filters: { grade: '', semester: 'first', year: '2026', hideFilter: 'all', search: '' },
+            // جعل الفلاتر الافتراضية فارغة (الكل) بدلاً من قيم محددة
+            filters: { grade: '', semester: '', year: '', hideFilter: 'all', search: '' },
             batchFilters: { grade: '', semester: 'first', year: '2026' },
             
             init() {
@@ -357,6 +363,7 @@
                     this.isAuthenticated = true;
                     this.loadData();
                     this.render();
+                    window.addEventListener('beforeunload', () => { this.saveData(); });
                 } else {
                     Auth.showLoginScreen(() => {
                         this.isAuthenticated = true;
@@ -372,20 +379,65 @@
             
             loadData() {
                 try {
-                    this.students = JSON.parse(localStorage.getItem('neovision_students') || '[]');
-                    this.results = JSON.parse(localStorage.getItem('neovision_results') || '[]');
-                    this.uploadLogs = JSON.parse(localStorage.getItem('neovision_uploads') || '[]');
+                    const savedStudents = localStorage.getItem('neovision_students');
+                    const savedResults = localStorage.getItem('neovision_results');
+                    const savedUploads = localStorage.getItem('neovision_uploads');
+                    
+                    this.students = savedStudents ? JSON.parse(savedStudents) : [];
+                    this.results = savedResults ? JSON.parse(savedResults) : [];
+                    this.uploadLogs = savedUploads ? JSON.parse(savedUploads) : [];
+                    
                     console.log('📊 تم تحميل:', this.students.length, 'طالب،', this.results.length, 'نتيجة');
-                } catch(e) { console.error(e); }
+                    
+                    // محاولة استخراج السنوات والمراحل المتاحة للفلاتر
+                    this.detectAvailableFilters();
+                } catch(e) { 
+                    console.error(e);
+                    this.students = [];
+                    this.results = [];
+                    this.uploadLogs = [];
+                }
+            },
+            
+            detectAvailableFilters() {
+                // تحديد السنوات المتاحة في البيانات
+                const years = new Set();
+                const semesters = new Set();
+                this.results.forEach(r => {
+                    if (r.academic_year) years.add(r.academic_year);
+                    if (r.semester) semesters.add(r.semester);
+                });
+                
+                // إذا كان الفلتر الحالي غير موجود في البيانات، قم بإزالته
+                if (this.filters.year && !years.has(this.filters.year)) {
+                    this.filters.year = '';
+                }
+                if (this.filters.semester && !semesters.has(this.filters.semester)) {
+                    this.filters.semester = '';
+                }
+                
+                console.log('📅 السنوات المتاحة:', Array.from(years));
+                console.log('📖 الفصول المتاحة:', Array.from(semesters));
+            },
+            
+            showSaveIndicator() {
+                const indicator = document.getElementById('saveIndicator');
+                if (indicator) {
+                    indicator.classList.add('show');
+                    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+                    this.saveTimeout = setTimeout(() => {
+                        indicator.classList.remove('show');
+                    }, 1500);
+                }
             },
             
             saveData() {
                 localStorage.setItem('neovision_students', JSON.stringify(this.students));
                 localStorage.setItem('neovision_results', JSON.stringify(this.results));
                 localStorage.setItem('neovision_uploads', JSON.stringify(this.uploadLogs));
+                this.showSaveIndicator();
             },
             
-            // تصدير جميع البيانات إلى ملف JSON لرفعه على GitHub
             exportToJson() {
                 const data = {
                     students: this.students,
@@ -413,8 +465,8 @@
             getUniqueSubjectsForGrade(gradeId, semester, year) {
                 const gradeResults = this.results.filter(r => 
                     r.grade_level_id == gradeId && 
-                    r.semester === semester && 
-                    r.academic_year === year
+                    (semester ? r.semester === semester : true) && 
+                    (year ? r.academic_year === year : true)
                 );
                 const subjectsMap = new Map();
                 gradeResults.forEach(r => {
@@ -781,7 +833,7 @@
                 div.innerHTML = message;
                 const container = document.querySelector('.container');
                 if (container) container.insertBefore(div, container.firstChild);
-                setTimeout(() => div.remove(), 5000);
+                setTimeout(() => div.remove(), 4000);
             },
             
             getStats() {
@@ -795,31 +847,58 @@
             
             getFilteredResults() {
                 let filtered = [...this.results];
-                if (this.filters.grade) filtered = filtered.filter(r => r.grade_level_id == this.filters.grade);
-                if (this.filters.semester) filtered = filtered.filter(r => r.semester === this.filters.semester);
-                if (this.filters.year) filtered = filtered.filter(r => r.academic_year === this.filters.year);
-                if (this.filters.hideFilter === 'visible') filtered = filtered.filter(r => !r.is_hidden);
-                if (this.filters.hideFilter === 'hidden') filtered = filtered.filter(r => r.is_hidden);
+                
+                // تطبيق الفلاتر فقط إذا كانت القيم محددة (غير فارغة)
+                if (this.filters.grade && this.filters.grade !== '') {
+                    filtered = filtered.filter(r => r.grade_level_id == this.filters.grade);
+                }
+                if (this.filters.semester && this.filters.semester !== '') {
+                    filtered = filtered.filter(r => r.semester === this.filters.semester);
+                }
+                if (this.filters.year && this.filters.year !== '') {
+                    filtered = filtered.filter(r => r.academic_year === this.filters.year);
+                }
+                if (this.filters.hideFilter === 'visible') {
+                    filtered = filtered.filter(r => !r.is_hidden);
+                } else if (this.filters.hideFilter === 'hidden') {
+                    filtered = filtered.filter(r => r.is_hidden);
+                }
+                
                 return filtered;
             },
             
             getStudentsWithResults() {
                 let filteredResults = this.getFilteredResults();
-                if (this.filters.search) {
+                
+                // تطبيق البحث على الطلاب
+                if (this.filters.search && this.filters.search !== '') {
                     const studentIds = this.students.filter(s => s.name.includes(this.filters.search)).map(s => s.id);
                     filteredResults = filteredResults.filter(r => studentIds.includes(r.student_id));
                 }
+                
+                // تجميع النتائج حسب الطالب
                 const map = new Map();
                 filteredResults.forEach(r => {
                     const student = this.students.find(s => s.id === r.student_id);
                     if (student) {
-                        if (!map.has(student.id)) map.set(student.id, { ...student, results: [] });
+                        if (!map.has(student.id)) {
+                            map.set(student.id, { 
+                                ...student, 
+                                results: [],
+                                grade_level_id: student.grade_level_id,
+                                academic_year: student.academic_year
+                            });
+                        }
                         map.get(student.id).results.push(r);
                     }
                 });
+                
+                // ترتيب النتائج لكل طالب حسب display_order
                 for (let student of map.values()) {
                     student.results.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
                 }
+                
+                // ترتيب الطلاب حسب الاسم
                 return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
             },
 
@@ -839,7 +918,7 @@
                             'رقم الجلوس': student.seatNumber || '',
                             'المرحلة': this.gradeLevels.find(g => g.id == student.grade_level_id)?.name || '',
                             'السنة الدراسية': result.academic_year,
-                            'الفصل الدراسي': result.semester === 'first' ? 'الأول' : 'الثاني',
+                            'الفصل الدراسي': result.semester === 'first' ? 'الأول' : (result.semester === 'second' ? 'الثاني' : result.semester),
                             'المادة': result.subject_name,
                             'الدرجة': result.is_empty ? '—' : result.subject_grade,
                             'الحالة': result.is_hidden ? 'محجوبة' : (result.is_empty ? 'فارغة' : 'ظاهرة'),
@@ -862,8 +941,8 @@
                     return;
                 }
                 
-                const gradeName = this.filters.grade ? this.gradeLevels.find(g => g.id == this.filters.grade)?.name : 'الكل';
-                const semesterName = this.filters.semester === 'first' ? 'الأول' : 'الثاني';
+                const gradeName = this.filters.grade ? (this.gradeLevels.find(g => g.id == this.filters.grade)?.name || this.filters.grade) : 'الكل';
+                const semesterName = this.filters.semester === 'first' ? 'الأول' : (this.filters.semester === 'second' ? 'الثاني' : (this.filters.semester || 'الكل'));
                 
                 let printWindow = window.open('', '_blank');
                 printWindow.document.write(`
@@ -898,7 +977,7 @@
                             <div class="school-sub">New Vision Private Schools - كشف النتائج</div>
                         </div>
                         <div class="filter-info">
-                            📋 المعايير: المرحلة (${gradeName}) | الفصل (${semesterName}) | السنة (${this.filters.year})
+                            📋 المعايير: المرحلة (${gradeName}) | الفصل (${semesterName}) | السنة (${this.filters.year || 'الكل'})
                         </div>
                 `);
                 
@@ -911,7 +990,7 @@
                             <div class="student-header">
                                 <div class="student-name">${this.escapeHtml(student.name)}</div>
                                 <div class="student-details">
-                                    🆔 ${student.nationalId} | 🪑 ${student.seatNumber || 'لا يوجد'} | 📚 ${this.gradeLevels.find(g => g.id == student.grade_level_id)?.name || ''}
+                                    🆔 ${this.escapeHtml(student.nationalId)} | 🪑 ${this.escapeHtml(student.seatNumber || 'لا يوجد')} | 📚 ${this.gradeLevels.find(g => g.id == student.grade_level_id)?.name || ''}
                                 </div>
                             </div>
                             <table>
@@ -919,8 +998,8 @@
                                     <tr><th>المادة</th><th>الدرجة</th><th>النوع</th></tr>
                                 </thead>
                                 <tbody>
-                                    ${addedSubjects.map(sub => `<tr class="added-row"><td>📖 ${this.escapeHtml(sub.subject_name)}</td><td>${this.escapeHtml(sub.subject_grade)}</td><td style="color:green;">✅ مضافة للمجموع</td></tr>`).join('')}
-                                    ${otherSubjects.map(sub => `<tr><td>📖 ${this.escapeHtml(sub.subject_name)}</td><td>${this.escapeHtml(sub.subject_grade)}</td><td style="color:orange;">⚠️ غير مضافة للمجموع</td></tr>`).join('')}
+                                    ${addedSubjects.map(sub => `<tr style="background:#e6fffa;"><td>📖 ${this.escapeHtml(sub.subject_name)}</strong></td><td style="color:green;">${this.escapeHtml(sub.subject_grade)}</span></td><td style="color:green;">✅ مضافة للمجموع</span></td></tr>`).join('')}
+                                    ${otherSubjects.map(sub => `<tr><td>📖 ${this.escapeHtml(sub.subject_name)}</strong></td><td style="color:orange;">${this.escapeHtml(sub.subject_grade)}</span></td><td style="color:orange;">⚠️ غير مضافة للمجموع</span></td></tr>`).join('')}
                                 </tbody>
                             </table>
                         </div>
@@ -1011,10 +1090,10 @@
                         <div class="card-header">📋 عمليات الرفع السابقة</div>
                         <div class="card-body">
                             ${recentUploads.length > 0 ? `
-                                <table class="table"><thead><tr><th>#</th><th>اسم الملف</th><th>المرحلة</th><th>السنة</th><th>عدد المواد</th><th>عدد الطلاب</th><th>التاريخ</th><th></th></thead>
+                                <table class="table"><thead><tr><th>#</th><th>اسم الملف</th><th>المرحلة</th><th>السنة</th><th>عدد المواد</th><th>عدد الطلاب</th><th>التاريخ</th><th></th></tr></thead>
                                 <tbody>${recentUploads.map((u, i) => `<tr><td style="text-align:center;">${i+1}</td><td style="text-align:center;">${this.escapeHtml(u.filename)}</td><td style="text-align:center;">${this.gradeLevels.find(g => g.id == u.grade_level_id)?.name || '-'}</td><td style="text-align:center;">${u.academic_year}</td><td style="text-align:center;">${u.records_count}</td><td style="text-align:center;">${u.students_count || '-'}</td><td style="text-align:center;">${new Date(u.upload_date).toLocaleString('ar')}</td><td style="text-align:center;"><button class="btn btn-danger btn-sm" onclick="App.deleteUpload(${u.id})">🗑️ حذف</button></td></tr>`).join('')}</tbody>
-                               </table>
-                            ` : '<p style="text-align:center;">لا توجد عمليات رفع</p>'}
+                                </table>
+                            ` : '<p class="no-data-message">📭 لا توجد عمليات رفع</p>'}
                         </div>
                     </div>
                 `;
@@ -1023,6 +1102,44 @@
             renderResults() {
                 const studentsData = this.getStudentsWithResults();
                 const filtered = this.getFilteredResults();
+                
+                // إذا كان عدد الطلاب والنتائج صفر ولكن البيانات موجودة، قم بإعادة تعيين الفلاتر
+                if (studentsData.length === 0 && (this.students.length > 0 || this.results.length > 0)) {
+                    // يوجد بيانات ولكن الفلاتر لا تظهر شيئاً - عرض رسالة توضيحية
+                    const availableYears = [...new Set(this.results.map(r => r.academic_year))];
+                    const availableSemesters = [...new Set(this.results.map(r => r.semester))];
+                    const availableGrades = [...new Set(this.results.map(r => r.grade_level_id))];
+                    
+                    return `
+                        <div class="stats-bar">
+                            <div class="stat-box"><div class="stat-number">${this.students.length}</div><div class="stat-label">👨‍🎓 إجمالي الطلاب في النظام</div></div>
+                            <div class="stat-box"><div class="stat-number">${this.results.length}</div><div class="stat-label">📊 إجمالي المواد في النظام</div></div>
+                        </div>
+                        
+                        <div class="filter-bar">
+                            <form class="filter-form" id="filterForm">
+                                <div class="form-group"><label>المرحلة</label><select name="grade"><option value="">الكل</option>${this.gradeLevels.map(g => `<option value="${g.id}" ${this.filters.grade == g.id ? 'selected' : ''}>${g.name}</option>`).join('')}</select></div>
+                                <div class="form-group"><label>الفصل</label><select name="semester"><option value="">الكل</option><option value="first" ${this.filters.semester === 'first' ? 'selected' : ''}>الأول</option><option value="second" ${this.filters.semester === 'second' ? 'selected' : ''}>الثاني</option></select></div>
+                                <div class="form-group"><label>السنة</label><select name="year"><option value="">الكل</option>${availableYears.map(y => `<option value="${y}" ${this.filters.year === y ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+                                <div class="form-group"><label>الحالة</label><select name="hideFilter"><option value="all" ${this.filters.hideFilter === 'all' ? 'selected' : ''}>الكل</option><option value="visible" ${this.filters.hideFilter === 'visible' ? 'selected' : ''}>الظاهرة</option><option value="hidden" ${this.filters.hideFilter === 'hidden' ? 'selected' : ''}>المخفية</option></select></div>
+                                <div class="form-group"><label>بحث</label><input type="text" name="search" value="${this.escapeHtml(this.filters.search)}" placeholder="اسم الطالب"></div>
+                                <div class="form-group"><button type="submit" class="btn btn-primary">🔍 بحث</button><button type="button" id="resetFilters" class="btn" style="background:#e2e8f0;">إعادة تعيين</button></div>
+                            </form>
+                        </div>
+                        
+                        <div class="card" style="padding:40px;text-align:center;">
+                            <div style="font-size:48px; margin-bottom:20px;">🔍</div>
+                            <div style="font-size:18px; margin-bottom:10px;">لا توجد نتائج مطابقة لمعايير البحث</div>
+                            <div style="color:#718096; margin-bottom:20px;">يوجد ${this.students.length} طالب و ${this.results.length} مادة في النظام، ولكن الفلاتر الحالية لا تظهر أي نتائج</div>
+                            <div style="background:#f8f9fa; padding:15px; border-radius:15px; text-align:right;">
+                                <strong>💡 نصيحة:</strong><br>
+                                • تأكد من اختيار الفصل الدراسي الصحيح (الأول/الثاني)<br>
+                                • تأكد من اختيار السنة الدراسية الصحيحة<br>
+                                • اضغط على زر "إعادة تعيين" لعرض جميع البيانات
+                            </div>
+                        </div>
+                    `;
+                }
                 
                 if (studentsData.length === 0) {
                     return `
@@ -1035,14 +1152,18 @@
                         <div class="filter-bar">
                             <form class="filter-form" id="filterForm">
                                 <div class="form-group"><label>المرحلة</label><select name="grade"><option value="">الكل</option>${this.gradeLevels.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}</select></div>
-                                <div class="form-group"><label>الفصل</label><select name="semester"><option value="first">الأول</option><option value="second">الثاني</option></select></div>
-                                <div class="form-group"><label>السنة</label><select name="year"><option value="2026">2026</option><option value="2025">2025</option></select></div>
+                                <div class="form-group"><label>الفصل</label><select name="semester"><option value="">الكل</option><option value="first">الأول</option><option value="second">الثاني</option></select></div>
+                                <div class="form-group"><label>السنة</label><select name="year"><option value="">الكل</option><option value="2026">2026</option><option value="2025">2025</option></select></div>
                                 <div class="form-group"><label>الحالة</label><select name="hideFilter"><option value="all">الكل</option><option value="visible">الظاهرة</option><option value="hidden">المخفية</option></select></div>
                                 <div class="form-group"><label>بحث</label><input type="text" name="search" placeholder="اسم الطالب"></div>
                                 <div class="form-group"><button type="submit" class="btn btn-primary">🔍 بحث</button><button type="button" id="resetFilters" class="btn" style="background:#e2e8f0;">إعادة تعيين</button></div>
                             </form>
                         </div>
-                        <div class="card" style="padding:40px;text-align:center;">😕 لا توجد نتائج مطابقة لمعايير البحث<br><small>تأكد من رفع ملفات النتائج أولاً</small></div>
+                        <div class="card" style="padding:40px;text-align:center;">
+                            <div style="font-size:48px; margin-bottom:20px;">📭</div>
+                            <div>لا توجد بيانات في النظام</div>
+                            <div style="color:#718096; margin-top:10px;">تأكد من رفع ملفات النتائج أولاً من لوحة التحكم</div>
+                        </div>
                     `;
                 }
                 
@@ -1057,8 +1178,8 @@
                     <div class="filter-bar">
                         <form class="filter-form" id="filterForm">
                             <div class="form-group"><label>المرحلة</label><select name="grade"><option value="">الكل</option>${this.gradeLevels.map(g => `<option value="${g.id}" ${this.filters.grade == g.id ? 'selected' : ''}>${g.name}</option>`).join('')}</select></div>
-                            <div class="form-group"><label>الفصل</label><select name="semester"><option value="first" ${this.filters.semester === 'first' ? 'selected' : ''}>الأول</option><option value="second" ${this.filters.semester === 'second' ? 'selected' : ''}>الثاني</option></select></div>
-                            <div class="form-group"><label>السنة</label><select name="year"><option value="2026" ${this.filters.year === '2026' ? 'selected' : ''}>2026</option><option value="2025" ${this.filters.year === '2025' ? 'selected' : ''}>2025</option></select></div>
+                            <div class="form-group"><label>الفصل</label><select name="semester"><option value="">الكل</option><option value="first" ${this.filters.semester === 'first' ? 'selected' : ''}>الأول</option><option value="second" ${this.filters.semester === 'second' ? 'selected' : ''}>الثاني</option></select></div>
+                            <div class="form-group"><label>السنة</label><select name="year"><option value="">الكل</option><option value="2026" ${this.filters.year === '2026' ? 'selected' : ''}>2026</option><option value="2025" ${this.filters.year === '2025' ? 'selected' : ''}>2025</option><option value="2024" ${this.filters.year === '2024' ? 'selected' : ''}>2024</option></select></div>
                             <div class="form-group"><label>الحالة</label><select name="hideFilter"><option value="all" ${this.filters.hideFilter === 'all' ? 'selected' : ''}>الكل</option><option value="visible" ${this.filters.hideFilter === 'visible' ? 'selected' : ''}>الظاهرة</option><option value="hidden" ${this.filters.hideFilter === 'hidden' ? 'selected' : ''}>المخفية</option></select></div>
                             <div class="form-group"><label>بحث</label><input type="text" name="search" value="${this.escapeHtml(this.filters.search)}" placeholder="اسم الطالب"></div>
                             <div class="form-group"><button type="submit" class="btn btn-primary">🔍 بحث</button><button type="button" id="resetFilters" class="btn" style="background:#e2e8f0;">إعادة تعيين</button></div>
@@ -1082,12 +1203,12 @@
                             const hiddenCount = student.results.filter(r => r.is_hidden).length;
                             const emptyCount = student.results.filter(r => r.is_empty).length;
                             return `
-                                <div class="student-card">
+                                <div class="student-card" data-student-id="${student.id}">
                                     <div class="student-card-header" onclick="this.closest('.student-card').classList.toggle('expanded')">
                                         <div class="student-info">
                                             <div class="student-name">📚 ${this.escapeHtml(student.name)}</div>
                                             <div class="student-detail">${gradeName}</div>
-                                            <div class="student-detail">📅 ${student.academic_year}</div>
+                                            <div class="student-detail">📅 ${student.academic_year || 'غير محدد'}</div>
                                             ${student.seatNumber ? `<div class="student-detail">🪑 ${this.escapeHtml(student.seatNumber)}</div>` : ''}
                                             ${hiddenCount > 0 ? `<div class="badge-hidden-count">🔒 ${hiddenCount} محجوبة</div>` : ''}
                                             ${emptyCount > 0 ? `<div class="badge-hidden-count" style="background:#f59e0b;">⚠️ ${emptyCount} فارغة</div>` : ''}
@@ -1116,15 +1237,15 @@
                                                     return `
                                                         <tr style="${rowStyle}">
                                                             <td class="checkbox-col"><input type="checkbox" class="result-checkbox" data-result-id="${result.id}"></td>
-                                                            <td>${this.escapeHtml(result.subject_name)}</td>
+                                                            <td>${this.escapeHtml(result.subject_name)}</strong></td>
                                                             <td><strong>${this.escapeHtml(displayGrade)}</strong></td>
                                                             <td><span class="${badgeClass}">${badgeText}</span></td>
-                                                            <td>${result.is_added_to_total ? '✅ مضاف' : '⚠️ غير مضاف'}</td>
+                                                            <td>${result.is_added_to_total ? '✅ مضاف' : '⚠️ غير مضاف'}</span></td>
                                                             <td>
                                                                 <button class="toggle-link" onclick="App.toggleResult(${result.id})">${result.is_hidden ? '👁️ إظهار' : '🔒 إخفاء'}</button>
                                                                 <button class="toggle-link" onclick="App.deleteResult(${result.id})" style="background:#fee; color:#c53030;">🗑️ حذف</button>
-                                                            </td>
-                                                        </tr>
+                                                             </span>
+                                                         </tr>
                                                     `;
                                                 }).join('')}
                                             </tbody>
@@ -1147,7 +1268,7 @@
                         <div class="nav-links">
                             <button class="${this.activeTab === 'dashboard' ? 'active' : ''}" data-tab="dashboard">📊 لوحة التحكم</button>
                             <button class="${this.activeTab === 'results' ? 'active' : ''}" data-tab="results">📖 عرض المواد</button>
-                            <a href="student.html" class="student-link">🔍 صفحة الاستعلام للطلاب</a>
+                            <a href="student.html" id="studentPageLink" class="student-link">🔍 صفحة الاستعلام للطلاب</a>
                             <button id="logoutHeaderBtn" class="logout-header-btn">🚪 تسجيل خروج</button>
                         </div>
                     </div></div>
@@ -1167,7 +1288,14 @@
                     logoutHeaderBtn.onclick = () => this.logout();
                 }
                 
-                // زر تصدير JSON
+                const studentLink = document.getElementById('studentPageLink');
+                if (studentLink) {
+                    studentLink.onclick = (e) => {
+                        this.saveData();
+                        return true;
+                    };
+                }
+                
                 const exportJsonBtn = document.getElementById('exportToJsonBtn');
                 if (exportJsonBtn) {
                     exportJsonBtn.onclick = () => this.exportToJson();
@@ -1219,8 +1347,8 @@
                         const fd = new FormData(filterForm);
                         this.updateFilters({
                             grade: fd.get('grade') || '',
-                            semester: fd.get('semester') || 'first',
-                            year: fd.get('year') || '2026',
+                            semester: fd.get('semester') || '',
+                            year: fd.get('year') || '',
                             hideFilter: fd.get('hideFilter') || 'all',
                             search: fd.get('search') || ''
                         });
@@ -1230,7 +1358,7 @@
                 const resetBtn = document.getElementById('resetFilters');
                 if (resetBtn) {
                     resetBtn.onclick = () => {
-                        this.updateFilters({ grade: '', semester: 'first', year: '2026', hideFilter: 'all', search: '' });
+                        this.updateFilters({ grade: '', semester: '', year: '', hideFilter: 'all', search: '' });
                     };
                 }
                 
@@ -1253,7 +1381,11 @@
                 }
             },
             
-            updateFilters(newFilters) { this.filters = { ...this.filters, ...newFilters }; this.render(); },
+            updateFilters(newFilters) { 
+                this.filters = { ...this.filters, ...newFilters }; 
+                console.log('تم تحديث الفلاتر:', this.filters);
+                this.render(); 
+            },
             escapeHtml(text) { if (!text) return ''; return String(text).replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
         };
         
